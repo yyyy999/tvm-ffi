@@ -47,6 +47,9 @@ logger = logging.getLogger(__name__)
 
 def _torch_extension_device(torch_module: Any) -> str:
     """Return the torch backend name used in the optional extension library name."""
+    # NPU takes precedence over CUDA/ROCm if torch_npu is installed and available.
+    if hasattr(torch_module, "npu") and torch_module.npu.is_available():
+        return "npu"
     if torch_module.cuda.is_available():
         if getattr(torch_module.version, "cuda", None) is not None:
             return "cuda"
@@ -164,6 +167,8 @@ def load_torch_c_dlpack_extension() -> Any:  # noqa: PLR0912, PLR0915
                 args.append("--build-with-cuda")
             elif device == "rocm":
                 args.append("--build-with-rocm")
+            elif device == "npu":
+                args.append("--build-with-npu")
 
             # use capture_output to reduce noise when building the torch c dlpack addon
             result = subprocess.run(args, check=False, capture_output=True)

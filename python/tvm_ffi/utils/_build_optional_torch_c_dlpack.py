@@ -50,6 +50,9 @@ cpp_source = """
 #include <c10/hip/HIPStream.h>
 #include <ATen/hip/impl/HIPStreamMasqueradingAsCUDA.h>
 #endif
+#ifdef BUILD_WITH_NPU
+#include <c10_npu/NPUStream.h>
+#endif
 
 using namespace std;
 namespace at {
@@ -519,6 +522,12 @@ struct TorchDLPackExchangeAPI : public DLPackExchangeAPI {
         return 0;
       }
 #endif
+#ifdef BUILD_WITH_NPU
+      if (device_type == kDLExtDev) {
+        *out_stream = c10_npu::getCurrentNPUStream(device_id).stream();
+        return 0;
+      }
+#endif
       // For CPU and other devices, return NULL (no stream concept)
       *out_stream = nullptr;
       return 0;
@@ -759,6 +768,11 @@ def main() -> None:  # noqa: PLR0912, PLR0915
         help="Build with ROCm support.",
     )
     parser.add_argument(
+        "--build-with-npu",
+        action="store_true",
+        help="Build with Ascend NPU support (requires torch_npu installed).",
+    )
+    parser.add_argument(
         "--libname",
         type=str,
         default="auto",
@@ -768,6 +782,8 @@ def main() -> None:  # noqa: PLR0912, PLR0915
     args = parser.parse_args()
     if args.build_with_cuda and args.build_with_rocm:
         raise ValueError("Cannot enable both CUDA and ROCm at the same time.")
+    if args.build_with_npu and (args.build_with_cuda or args.build_with_rocm):
+        raise ValueError("Cannot enable NPU with CUDA or ROCm at the same time.")
 
     # resolve build directory
     if args.build_dir is None:
@@ -785,6 +801,8 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             device = "cuda"
         elif args.build_with_rocm:
             device = "rocm"
+        elif args.build_with_npu:
+            device = "npu"
         else:
             device = "cpu"
         suffix = ".dll" if IS_WINDOWS else ".so"
@@ -819,7 +837,15 @@ def main() -> None:  # noqa: PLR0912, PLR0915
         elif args.build_with_rocm:
             cflags.extend(torch.utils.cpp_extension.COMMON_HIP_FLAGS)
             cflags.append("-DBUILD_WITH_ROCM")
+        elif args.build_with_npu:
+            cflags.append("-DBUILD_WITH_NPU")
         include_paths.extend(get_torch_include_paths(args.build_with_cuda or args.build_with_rocm))
+
+        # torch_npu ships headers under its own package directory; add it to include path
+        if args.build_with_npu:
+            import torch_npu  # noqa: PLC0415
+            torch_npu_path = Path(torch_npu.__file__).parent
+            include_paths.append(str(torch_npu_path / "include"))
 
         # use CXX11 ABI
         if torch.compiled_with_cxx11_abi():
@@ -839,11 +865,15 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             ldflags.extend(["c10.lib", "torch.lib", "torch_cpu.lib", "torch_python.lib"])
             if args.build_with_cuda:
                 ldflags.extend(["torch_cuda.lib", "c10_cuda.lib"])
+            if args.build_with_npu:
+                ldflags.extend(["torch_npu.lib", "c10_npu.lib"])
         else:
             # On Unix/macOS, use -l format for linking
             ldflags.extend(["-lc10", "-ltorch", "-ltorch_cpu", "-ltorch_python"])
             if args.build_with_cuda:
                 ldflags.extend(["-ltorch_cuda", "-lc10_cuda"])
+            if args.build_with_npu:
+                ldflags.extend(["-ltorch_npu", "-lc10_npu"])
 
         # Add Python library linking
         if IS_WINDOWS:
