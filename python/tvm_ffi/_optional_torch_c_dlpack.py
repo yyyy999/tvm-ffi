@@ -124,7 +124,10 @@ def load_torch_c_dlpack_extension() -> Any:  # noqa: PLR0912, PLR0915
         major, minor = torch.__version__.split(".")[:2]
         # First use "torch.cuda.is_available()" to check whether GPU environment
         # is available. Then determine the GPU type.
-        if torch.cuda.is_available():
+        # NPU takes precedence over CUDA/ROCm if torch_npu is installed and available.
+        if hasattr(torch, "npu") and torch.npu.is_available():
+            device = "npu"
+        elif torch.cuda.is_available():
             if torch.version.cuda is not None:
                 device = "cuda"
             elif torch.version.hip is not None:
@@ -153,6 +156,8 @@ def load_torch_c_dlpack_extension() -> Any:  # noqa: PLR0912, PLR0915
                 args.append("--build-with-cuda")
             elif device == "rocm":
                 args.append("--build-with-rocm")
+            elif device == "npu":
+                args.append("--build-with-npu")
 
             # use capture_output to reduce noise when building the torch c dlpack addon
             result = subprocess.run(args, check=False, capture_output=True)
